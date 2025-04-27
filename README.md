@@ -20,20 +20,21 @@ Shared Memory Architecture: Uses mmap for efficient IPC
 ## Step-by-Step Installation
 
 1. Clone the repository (if available):
-
-bash
-git clone https://github.com/yourusername/shared-chat.git
+```bash
+git clone https://github.com/username/shared-chat.git
 cd shared-chat
+```
 
 2. Compile the program:
-
-bash
+```bash
 gcc talk.c -o talk
+```
 
 3. Run the application:
-
-bash
+```bash
 ./talk shared_memory_file
+```
+
 Replace shared_memory_file with your preferred name for the shared memory file.
 
 4. For multiple users:
