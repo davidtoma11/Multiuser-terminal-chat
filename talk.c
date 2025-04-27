@@ -43,7 +43,6 @@ char* filename = NULL;
 User current_user;
 int last_seen = 0;
 
-
 const char* format_time(time_t timestamp) {
     static char buf[20];
     strftime(buf, sizeof(buf), TIME_FORMAT, localtime(&timestamp));
@@ -89,7 +88,7 @@ void send_notification(const char* message) {
     lock_file();
     if (data->num_messages < MAX_MESSAGES) {
         Message* msg = &data->messages[data->num_messages++];
-        snprintf(msg->text, MSG_SIZE, "--- %s %s ---", current_user.username, message);
+        snprintf(msg->text, MSG_SIZE, "--- %s ---", message);
         msg->pid = current_user.pid;
         msg->uid = current_user.uid;
         msg->timestamp = time(NULL);
@@ -120,7 +119,7 @@ void connect_user() {
     unlock_file();
 
     char notification[MSG_SIZE];
-    snprintf(notification, MSG_SIZE, "--- %s s-a conectat ---", current_user.username);
+    snprintf(notification, MSG_SIZE, "%s s-a conectat", current_user.username);
     send_notification(notification);
 }
 
@@ -131,6 +130,10 @@ void disconnect_user_by_pid(pid_t pid) {
     for (int i = 0; i < data->num_users; i++) {
         if (data->users[i].pid == pid) {
             kill(pid, SIGTERM);
+
+            char notification[MSG_SIZE];
+            snprintf(notification, MSG_SIZE, "%s s-a deconectat", data->users[i].username);
+            send_notification(notification);
 
             for (int j = i; j < data->num_users - 1; j++) {
                 data->users[j] = data->users[j + 1];
@@ -188,7 +191,7 @@ void disconnect_user() {
 
     if (found) {
         char notification[MSG_SIZE];
-        snprintf(notification, MSG_SIZE, "--- %s s-a deconectat ---", current_user.username);
+        snprintf(notification, MSG_SIZE, "%s s-a deconectat", current_user.username);
         send_notification(notification);
 
         printf("[*] Te-ai deconectat.\n");
@@ -211,23 +214,26 @@ void print_message(const Message* msg) {
         return;  // Ignoră mesajele proprii
     }
 
-    if (strstr(msg->text, "---") != NULL) {
-        // Afișează notificările așa cum sunt (fără paranteze)
-        printf("\033[1;33m%s\033[0m\n", msg->text);  // Galben
-    } else {
-        // Afișează mesajele normale cu [Nume]>
-        struct passwd* pw = getpwuid(msg->uid);
-        char* username = pw ? pw->pw_name : "unknown";
-        printf("\033[1;34m[%s]\033[0m> %s", username, msg->text);  // Albastru
+    char display_name[MAX_NAME_LEN] = "unknown";
+    for (int i = 0; i < data->num_users; i++) {
+        if (data->users[i].pid == msg->pid) {
+            strncpy(display_name, data->users[i].username, MAX_NAME_LEN);
+            break;
+        }
     }
 
-    // Promptul tău (cu paranteze)
-    printf("\033[1;32m[%s]\033[0m> ", current_user.username);  // Verde
+    if (strstr(msg->text, "---") != NULL) {
+        // NOTIFICĂRI - afișează doar notificarea, fără prompt după
+        printf("\033[1;33m%s\033[0m\n", msg->text);
+    } else {
+        // MESAJE NORMALE - afișează mesajul + promptul tău
+        printf("\033[1;34m[%s]\033[0m> %s", display_name, msg->text);
+        printf("\033[1;32m[%s]\033[0m> ", current_user.username);
+    }
     fflush(stdout);
 }
 
 void receive_messages() {
-    // Afișează ultimele 10 mesaje la conectare (doar ale altora)
     lock_file();
     int start_idx = (data->num_messages > 10) ? data->num_messages - 10 : 0;
     printf("\n\033[1;35m--- Ultimele mesaje (%d) ---\033[0m\n", data->num_messages - start_idx);
@@ -244,7 +250,6 @@ void receive_messages() {
         lock_file();
         while (last_seen < data->num_messages) {
             Message* msg = &data->messages[last_seen % MAX_MESSAGES];
-            // Afișează DOAR mesajele altora
             if (msg->pid != current_user.pid) {
                 print_message(msg);
             }
@@ -259,12 +264,10 @@ void send_messages() {
     char buffer[MSG_SIZE];
 
     while (1) {
-        // Afișează promptul ÎNAINTE de a citi inputul (singurul loc unde este necesar)
         printf("\033[1;32m[%s]\033[0m> ", current_user.username);
         fflush(stdout);
 
         if (fgets(buffer, sizeof(buffer), stdin)) {
-            // Comanda /users
             if (strcmp(buffer, "/users\n") == 0) {
                 lock_file();
                 printf("\n\033[1;36m--- Utilizatori conectati (%d) ---\033[0m\n", data->num_users);
@@ -275,31 +278,27 @@ void send_messages() {
                 }
                 printf("\033[1;36m----------------------------\033[0m\n");
                 unlock_file();
-                continue;  // Nu mai afișa promptul aici!
+                continue;
             }
 
-            // Comanda /disconnect_all
             if (strcmp(buffer, "/disconnect_all\n") == 0) {
                 disconnect_all_users();
                 continue;
             }
 
-            // Comanda /disconnect PID
             if (strncmp(buffer, "/disconnect ", 12) == 0) {
                 pid_t pid = atoi(buffer + 12);
                 disconnect_user_by_pid(pid);
                 continue;
             }
 
-            // Comanda /history
             if (strcmp(buffer, "/history\n") == 0) {
                 lock_file();
                 printf("\n\033[1;35m--- Istoric complet (%d mesaje) ---\033[0m\n", data->num_messages);
                 for (int i = 0; i < data->num_messages; i++) {
                     Message* msg = &data->messages[i % MAX_MESSAGES];
                     if (msg->pid == current_user.pid) {
-                        printf("[%s] \033[1;32mTu\033[0m: %s",
-                              format_time(msg->timestamp), msg->text);
+                        printf("\033[1;32m[%s]\033[0m> %s", current_user.username, msg->text);
                     } else {
                         print_message(msg);
                     }
@@ -309,7 +308,6 @@ void send_messages() {
                 continue;
             }
 
-            // Comanda /search
             if (strncmp(buffer, "/search ", 8) == 0) {
                 char* keyword = buffer + 8;
                 keyword[strcspn(keyword, "\n")] = 0;
@@ -320,8 +318,7 @@ void send_messages() {
                     if (strstr(data->messages[i % MAX_MESSAGES].text, keyword) != NULL) {
                         Message* msg = &data->messages[i % MAX_MESSAGES];
                         if (msg->pid == current_user.pid) {
-                            printf("[%s] \033[1;32mTu\033[0m: %s",
-                                  format_time(msg->timestamp), msg->text);
+                            printf("\033[1;32m[%s]\033[0m> %s", current_user.username, msg->text);
                         } else {
                             print_message(msg);
                         }
@@ -332,7 +329,6 @@ void send_messages() {
                 continue;
             }
 
-            // Trimite mesaj normal
             lock_file();
             if (data->num_messages < MAX_MESSAGES) {
                 Message* msg = &data->messages[data->num_messages++];
@@ -415,5 +411,4 @@ int main(int argc, char* argv[]) {
     }
 
     return 0;
-
 }
